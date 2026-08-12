@@ -81,15 +81,17 @@ const MONTH_INDEX: Record<string, number> = {
   sep: 8, sept: 8, september: 8, oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
 };
 
-// Matches "13 August 2026, 12:08am" / "13 August 2026, 12:08 AM" / no am-pm
-// (24h) — captured as separate numeric groups rather than a date-like
-// substring, since handing an assembled string to `new Date(...)` is what
-// caused the original bug: JS's built-in parser returns Invalid Date for
-// "12:08am" (no space before am/pm) with no error, and code that falls back
-// to a looser pattern on that failure ends up reading "12:08" as 24-hour
-// time instead of 12:08 AM — a silent ~12-hour misread.
+// Matches "13 August 2026, 12:08am" (GPay) and "13th Aug 26, 01:58 am"
+// (BHIM) — an optional ordinal suffix on the day (1st/2nd/3rd/4th) and
+// either a 2- or 4-digit year — captured as separate numeric groups rather
+// than a date-like substring, since handing an assembled string to
+// `new Date(...)` is what caused the original bug: JS's built-in parser
+// returns Invalid Date for "12:08am" (no space before am/pm) with no error,
+// and code that falls back to a looser pattern on that failure ends up
+// reading "12:08" as 24-hour time instead of 12:08 AM — a silent ~12-hour
+// misread.
 const DATETIME_PATTERN =
-  /(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4}),?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([APap][Mm])?/;
+  /(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\s+(\d{2}(?:\d{2})?),?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([APap][Mm])?/;
 
 // UPI screenshots show the customer's local wall-clock time. This app is
 // for a single India shop, so that's always IST (UTC+5:30) — hardcoding it
@@ -106,6 +108,10 @@ function parseReceiptDateTime(text: string): Date | null {
   const month = MONTH_INDEX[monthStr.toLowerCase()];
   if (month === undefined) return null;
 
+  // A 2-digit year ("26") always means 20xx here — this app didn't exist
+  // before 2020 and won't still be running unmodified past 2099.
+  const year = yearStr.length === 2 ? 2000 + Number(yearStr) : Number(yearStr);
+
   let hour = Number(hourStr);
   if (ampm) {
     const isPM = ampm.toLowerCase() === "pm";
@@ -114,7 +120,7 @@ function parseReceiptDateTime(text: string): Date | null {
   }
 
   const utcMs =
-    Date.UTC(Number(yearStr), month, Number(dayStr), hour, Number(minuteStr), secondStr ? Number(secondStr) : 0) -
+    Date.UTC(year, month, Number(dayStr), hour, Number(minuteStr), secondStr ? Number(secondStr) : 0) -
     IST_OFFSET_MS;
   const parsed = new Date(utcMs);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
