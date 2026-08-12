@@ -39,12 +39,20 @@ function getWorker(): Promise<Worker> {
   return workerPromise;
 }
 
+// A worker-thread crash inside Tesseract doesn't always surface as a
+// rejected promise (it can just hang), which would otherwise leave the
+// customer stuck until the platform's own function timeout kills the whole
+// request. Racing against an explicit timeout guarantees this call always
+// settles well before that, so the route can fail the order cleanly.
+const OCR_TIMEOUT_MS = 20_000;
+
 export async function runOcr(buffer: Buffer): Promise<string> {
   const worker = await getWorker();
-  const {
-    data: { text },
-  } = await worker.recognize(buffer);
-  return text;
+  const recognizePromise = worker.recognize(buffer).then((r) => r.data.text);
+  const timeoutPromise = new Promise<string>((_, reject) =>
+    setTimeout(() => reject(new Error("OCR timed out")), OCR_TIMEOUT_MS)
+  );
+  return Promise.race([recognizePromise, timeoutPromise]);
 }
 
 // UPI apps label the transaction ID differently ("UPI transaction ID",
