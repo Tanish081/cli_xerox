@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { Button, Card, ErrorText, inputClass, PageShell } from "@/components/ui";
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -30,38 +31,51 @@ export default function AdminLoginPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-[80vh] max-w-sm flex-col justify-center px-4">
-      <h1 className="text-2xl font-semibold">Admin login</h1>
-      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-        <div>
-          <label className="block text-sm font-medium">Email</label>
-          <input
-            type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="mt-1 w-full rounded border border-neutral-300 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900"
-          />
+    <PageShell maxWidth="max-w-sm">
+      <div className="flex min-h-[70vh] flex-col justify-center">
+        <div className="animate-fade-in text-center">
+          <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-600/25">
+            <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+              />
+            </svg>
+          </span>
+          <h1 className="mt-4 text-2xl font-bold tracking-tight text-neutral-900 dark:text-white">Admin login</h1>
+          <p className="mt-1 text-sm text-neutral-500">Sign in to manage orders and shop settings.</p>
         </div>
-        <div>
-          <label className="block text-sm font-medium">Password</label>
-          <input
-            type="password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="mt-1 w-full rounded border border-neutral-300 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900"
-          />
-        </div>
-        {error && <p className="text-sm text-red-600">{error}</p>}
-        <button
-          type="submit"
-          disabled={submitting}
-          className="w-full rounded-md bg-neutral-900 px-5 py-2.5 font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-        >
-          {submitting ? "Signing in…" : "Sign in"}
-        </button>
-      </form>
-    </main>
+
+        <Card className="mt-6 p-6 animate-fade-in" style={{ animationDelay: "60ms" }}>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">Email</label>
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">Password</label>
+              <input
+                type="password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className={inputClass}
+              />
+            </div>
+            <ErrorText>{error}</ErrorText>
+            <Button type="submit" disabled={submitting} className="w-full">
+              {submitting ? "Signing in…" : "Sign in"}
+            </Button>
+          </form>
+        </Card>
+      </div>
+    </PageShell>
   );
 }

@@ -40,3 +40,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# tesseract.js language-data cache (downloaded at runtime, see src/lib/ocr.ts)
+*.traineddata
+*.traineddata.gz

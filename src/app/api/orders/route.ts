@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { generateOrderNumber } from "@/lib/order-number";
 import { priceForPrintSpec } from "@/lib/pricing";
-import { uploadOrderFile, DOCUMENTS_BUCKET } from "@/lib/storage";
+import { uploadOrderFile, DOCUMENTS_BUCKET, MAX_DOCUMENT_BYTES } from "@/lib/storage";
 import { grantOrderSession } from "@/lib/order-session";
+import { reserveStock } from "@/lib/stock";
 import type { PrintSpec, CartLine } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +44,9 @@ export async function POST(request: Request) {
   const documentFile = formData.get("document");
   if (printSpec && !(documentFile instanceof File)) {
     return NextResponse.json({ error: "A document is required for a print job" }, { status: 400 });
+  }
+  if (documentFile instanceof File && documentFile.size > MAX_DOCUMENT_BYTES) {
+    return NextResponse.json({ error: "Document is too large (max 20MB)" }, { status: 400 });
   }
 
   let cart: CartLine[] = [];
@@ -134,6 +138,12 @@ export async function POST(request: Request) {
     if (itemsError) {
       await supabase.from("orders").delete().eq("id", order.id);
       return NextResponse.json({ error: "Could not save cart items" }, { status: 500 });
+    }
+
+    const reservation = await reserveStock(supabase, orderItems);
+    if (!reservation.ok) {
+      await supabase.from("orders").delete().eq("id", order.id);
+      return NextResponse.json({ error: "One of the items in your cart just sold out" }, { status: 400 });
     }
   }
 

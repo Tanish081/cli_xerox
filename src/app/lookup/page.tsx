@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Button, Card, ErrorText, Eyebrow, inputClass, PageShell } from "@/components/ui";
 
 export default function LookupPage() {
   const router = useRouter();
@@ -40,42 +41,43 @@ export default function LookupPage() {
   }
 
   return (
-    <main className="mx-auto max-w-md px-4 py-10">
-      <h1 className="text-2xl font-semibold">Find your order</h1>
-      <p className="mt-1 text-sm text-neutral-500">
-        Enter the order number and phone number you used at checkout.
-      </p>
+    <PageShell>
+      <div className="animate-fade-in">
+        <Eyebrow>Track order</Eyebrow>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight text-neutral-900 dark:text-white">Find your order</h1>
+        <p className="mt-1.5 text-sm text-neutral-500">
+          Enter the order number and phone number you used at checkout.
+        </p>
+      </div>
 
-      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-        <div>
-          <label className="block text-sm font-medium">Order number</label>
-          <input
-            type="text"
-            placeholder="e.g. A214"
-            value={orderNumber}
-            onChange={(e) => setOrderNumber(e.target.value.toUpperCase())}
-            className="mt-1 w-full rounded border border-neutral-300 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium">Phone number</label>
-          <input
-            type="tel"
-            inputMode="numeric"
-            value={phoneNumber}
-            onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, "").slice(0, 10))}
-            className="mt-1 w-full rounded border border-neutral-300 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900"
-          />
-        </div>
-        {error && <p className="text-sm text-red-600">{error}</p>}
-        <button
-          type="submit"
-          disabled={submitting}
-          className="w-full rounded-md bg-neutral-900 px-5 py-2.5 font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-        >
-          {submitting ? "Searching…" : "Find order"}
-        </button>
-      </form>
-    </main>
+      <Card className="mt-6 p-6 animate-fade-in" style={{ animationDelay: "60ms" }}>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">Order number</label>
+            <input
+              type="text"
+              placeholder="e.g. A214"
+              value={orderNumber}
+              onChange={(e) => setOrderNumber(e.target.value.toUpperCase())}
+              className={inputClass}
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">Phone number</label>
+            <input
+              type="tel"
+              inputMode="numeric"
+              value={phoneNumber}
+              onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, "").slice(0, 10))}
+              className={inputClass}
+            />
+          </div>
+          <ErrorText>{error}</ErrorText>
+          <Button type="submit" disabled={submitting} className="w-full">
+            {submitting ? "Searching…" : "Find order"}
+          </Button>
+        </form>
+      </Card>
+    </PageShell>
   );
 }

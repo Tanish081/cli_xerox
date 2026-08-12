@@ -1,7 +1,5 @@
 export type OrderStatus =
   | "pending_payment"
-  | "pending_review"
-  | "verified"
   | "rejected"
   | "token_assigned"
   | "ready"
@@ -30,6 +28,9 @@ export type Order = {
   completed_at: string | null;
   expires_at: string | null;
   created_at: string;
+  ocr_extracted: Record<string, unknown> | null;
+  verification_failure_reason: string | null;
+  payment_fingerprint: string | null;
 };
 
 export type OrderItem = {

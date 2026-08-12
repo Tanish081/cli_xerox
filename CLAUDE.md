@@ -3,8 +3,9 @@
 # Xerox & stationery shop app — project spec
 
 A web app for a single xerox/print shop in India. Customers upload documents for
-printing, add stationery items to a cart, pay via the owner's UPI QR code, and
-upload a payment screenshot + UTR for manual approval. Once the owner approves,
+printing, add stationery items to a cart, pay via the owner's own uploaded UPI QR
+code image, and upload a payment screenshot. Payment is verified automatically
+via OCR against the screenshot — no manual owner approval step. Once verified,
 the order gets a token number and a ready-by estimate. No customer accounts —
 tracking works via a same-session view right after booking, or an order ID +
 phone number lookup afterward.
@@ -22,11 +23,30 @@ phone number lookup afterward.
 
 1. **No customer accounts or login, ever.** Two access paths only:
    same-session view, and order ID + phone number lookup.
-2. **Payment is QR-only.** No payment gateway integration. The owner's UPI QR
-   is shown at checkout; the customer pays externally and uploads proof.
-3. **Every order needs manual owner approval.** No auto-verification of
-   payment. Status only moves to "verified" when the owner approves it in the
-   admin dashboard.
+2. **Payment is QR-only, and the QR is a real photo the owner uploads** (from
+   `/admin/settings`) — not a generated deep link. It's shown as-is at
+   checkout; the customer pays externally in their own UPI app and uploads a
+   screenshot as proof.
+3. **Payment verification is fully automated via OCR — there is no manual
+   owner approval step.** The payment-proof endpoint runs OCR
+   (`src/lib/ocr.ts`, Tesseract.js) on the uploaded screenshot and checks,
+   against the order: an amount matching `total_amount`, the configured shop
+   name, and a timestamp inside the 10-minute payment window (`created_at`
+   to `created_at + 10min`). All three must pass. The transaction ID (UTR)
+   is read when present but is **not required** — some UPI apps' default
+   confirmation screenshot (e.g. GPay) never shows one, only the detailed
+   receipt view does (PhonePe shows it on the default screen). Because the
+   UTR can't be relied on to prevent the same screenshot being reused across
+   orders, every verified payment is fingerprinted
+   (`src/lib/payment-fingerprint.ts` — the UTR when found, otherwise a hash
+   of the image) and a `payment_fingerprint` uniqueness constraint blocks
+   reuse (`duplicate_payment` failure). On success the order goes straight to
+   `token_assigned` (token number + `estimated_ready_at` assigned then and
+   there). **Any failure — a mismatch, an unreadable screenshot, a reused
+   screenshot, or the window expiring — cancels the order outright**
+   (`status = 'rejected'`, terminal, no retry on that order); the customer is
+   sent back to place a new order. `pending_review` and `verified` are not
+   used anywhere in this app.
 4. **Order tracking expires 48 hours after completion.** After that, the
    lookup returns "not found," and the uploaded document + screenshot are
    deleted from storage.
@@ -44,18 +64,22 @@ orders
   order_number          text unique not null      -- short, human-readable, e.g. "A214"
   phone_number          text not null              -- used at checkout + later lookup
   status                text not null default 'pending_payment'
-                        -- pending_payment | pending_review | verified | rejected
+                        -- pending_payment | rejected
                         -- | token_assigned | ready | completed
   print_spec            jsonb                      -- { copies, color, duplex, binding, page_count }
   document_url          text                       -- path in Supabase Storage
   total_amount          numeric not null
   payment_screenshot_url text
-  payment_utr           text
+  payment_utr           text                       -- OCR-extracted, not customer-typed
   token_number           int
   estimated_ready_at     timestamptz
   completed_at            timestamptz
   expires_at               timestamptz             -- = completed_at + 48h, set on completion
   created_at              timestamptz default now()
+  ocr_extracted            jsonb                   -- { utr, amount, dateTime, rawText } from OCR
+  verification_failure_reason text                 -- set when status = 'rejected'
+  payment_fingerprint      text unique              -- UTR, or an image hash when no UTR was read;
+                                                     -- blocks reusing the same screenshot across orders
 
 order_items
   id           uuid primary key default gen_random_uuid()
@@ -71,6 +95,13 @@ stationery_products
   stock_quantity  int not null default 0
   image_url       text
   active          boolean default true
+
+shop_settings                          -- singleton row (id always 1)
+  id             smallint primary key default 1
+  shop_name      text not null default ''  -- must match the payee name on
+                                            -- UPI receipts; OCR matches against it
+  qr_image_path  text                      -- path in the shop-assets bucket
+  updated_at     timestamptz default now()
 
 lookup_attempts                        -- for rate limiting the phone+ID lookup
   id           uuid primary key default gen_random_uuid()
@@ -108,12 +139,11 @@ guessing a sequential order number.
 
 - Single login via Supabase Auth (email + password is enough — one owner
   account, no roles/permissions system needed)
-- Queue view: orders with `status = pending_review`, showing the screenshot,
-  UTR, and order total
-- Approve → sets `status = token_assigned`, generates the next `token_number`,
-  sets `estimated_ready_at`
-- Reject → sets `status = rejected`, order becomes re-editable by the customer
-  on their same-session page (let them re-upload proof)
+- `/admin/settings` — upload/replace the shop's QR code photo and set the
+  shop name used for OCR matching (`shop_settings`, `shop-assets` bucket)
+- Queue views: orders with `status = token_assigned` and `status = ready` —
+  there is no review queue, since verification happens automatically before
+  an order ever reaches the dashboard
 - Mark ready / mark completed buttons that update `status` and, on
   completion, set `completed_at` and `expires_at = completed_at + interval '48 hours'`
 
@@ -135,20 +165,22 @@ delete storage objects):
    for the tables above, RLS enabled with default-deny policies
 2. **Ordering flow** — document upload to Supabase Storage, print options +
    pricing, stationery catalog + cart
-3. **QR payment + proof upload** — checkout page showing the owner's UPI QR
-   (ideally a deep link encoding amount + order number as the note), proof
-   upload form (screenshot + UTR), writes order with `status = pending_review`
+3. **QR payment + OCR verification** — checkout page showing the owner's
+   uploaded QR photo, screenshot upload form, server-side OCR check against
+   the order (amount, shop name, UTR, 10-minute window) that decides
+   `token_assigned` vs `rejected` directly — no review queue
 4. **Same-session tracking page** — cookie-gated `/order?id=` page with
    polling status timeline
-5. **Admin dashboard** — Supabase Auth login, approval queue, approve/reject,
-   token assignment
+5. **Admin dashboard** — Supabase Auth login, shop QR/name settings, token
+   queue, ready queue
 6. **Lookup + cleanup** — rate-limited phone+ID lookup endpoint, daily cron
    job for expiry and file deletion
 
 ## Explicitly out of scope for now
 
-- Payment gateway integration (QR + manual approval only)
+- Payment gateway integration (QR + OCR verification only)
 - Customer accounts or any form of customer login
+- Manual owner approval of payments (fully automated via OCR)
 - Automated WhatsApp/SMS notifications (owner sends these manually if at all)
 - Multi-branch or multi-vendor support
 
@@ -158,6 +190,5 @@ delete storage objects):
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=       # used only for admin Auth on the client
 SUPABASE_SERVICE_ROLE_KEY=            # server-only, never exposed to client
-OWNER_UPI_VPA=
-OWNER_UPI_NAME=
+CRON_SECRET=                          # protects the daily cleanup cron endpoint
 ```

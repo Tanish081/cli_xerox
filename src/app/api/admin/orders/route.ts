@@ -7,8 +7,6 @@ export const dynamic = "force-dynamic";
 
 const VALID_STATUSES = new Set([
   "pending_payment",
-  "pending_review",
-  "verified",
   "rejected",
   "token_assigned",
   "ready",
@@ -21,7 +19,7 @@ export async function GET(request: Request) {
   }
 
   const { searchParams } = new URL(request.url);
-  const status = searchParams.get("status") ?? "pending_review";
+  const status = searchParams.get("status") ?? "token_assigned";
   if (!VALID_STATUSES.has(status)) {
     return NextResponse.json({ error: "Invalid status" }, { status: 400 });
   }

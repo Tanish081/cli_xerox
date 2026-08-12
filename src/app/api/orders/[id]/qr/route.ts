@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
-import QRCode from "qrcode";
 import { createServiceClient } from "@/lib/supabase/service";
 import { hasOrderSession } from "@/lib/order-session";
-import { buildUpiLink } from "@/lib/upi";
+import { signedUrl } from "@/lib/storage";
+import { getShopSettings, SHOP_ASSETS_BUCKET } from "@/lib/shop-settings";
+import { PAYMENT_WINDOW_MS } from "@/lib/payment-window";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id, total_amount, status")
+    .select("id, total_amount, status, created_at")
     .eq("order_number", orderNumber)
     .maybeSingle();
 
@@ -25,8 +26,18 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
-  const upiLink = buildUpiLink({ amount: order.total_amount, orderNumber });
-  const dataUrl = await QRCode.toDataURL(upiLink, { margin: 1, width: 320 });
+  const settings = await getShopSettings(supabase);
+  if (!settings?.qr_image_path) {
+    return NextResponse.json({ error: "The shop hasn't set up payments yet" }, { status: 503 });
+  }
 
-  return NextResponse.json({ qr_data_url: dataUrl, upi_link: upiLink, amount: order.total_amount });
+  const qrImageUrl = await signedUrl(supabase, SHOP_ASSETS_BUCKET, settings.qr_image_path);
+  const paymentDeadline = new Date(new Date(order.created_at).getTime() + PAYMENT_WINDOW_MS).toISOString();
+
+  return NextResponse.json({
+    qr_image_url: qrImageUrl,
+    amount: order.total_amount,
+    shop_name: settings.shop_name,
+    payment_deadline: paymentDeadline,
+  });
 }
