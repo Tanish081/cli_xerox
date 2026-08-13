@@ -7,13 +7,26 @@ import { Button, Card, ErrorText, inputClass, PageShell } from "@/components/ui"
 
 export default function AdminLoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
+  // Read the credentials off the form rather than from React state: a
+  // browser/password-manager autofill writes straight to the input's DOM
+  // value without firing the change event React listens for, so state-backed
+  // fields stay empty while the form visibly shows the credentials -- the
+  // sign-in then fails with "missing email or phone" and the button looks
+  // like it did nothing on the first click.
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const email = String(formData.get("email") ?? "").trim();
+    const password = String(formData.get("password") ?? "");
+
+    if (!email || !password) {
+      setError("Enter your email and password.");
+      return;
+    }
+
     setError(null);
     setSubmitting(true);
     try {
@@ -50,22 +63,30 @@ export default function AdminLoginPage() {
         <Card className="mt-6 p-6 animate-fade-in" style={{ animationDelay: "60ms" }}>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">Email</label>
+              <label htmlFor="email" className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                Email
+              </label>
               <input
+                id="email"
+                name="email"
                 type="email"
                 required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="username"
+                defaultValue=""
                 className={inputClass}
               />
             </div>
             <div>
-              <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300">Password</label>
+              <label htmlFor="password" className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                Password
+              </label>
               <input
+                id="password"
+                name="password"
                 type="password"
                 required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                defaultValue=""
                 className={inputClass}
               />
             </div>

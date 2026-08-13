@@ -72,11 +72,18 @@ export default function NewOrderPage() {
     });
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setFormError(null);
 
-    if (!/^[0-9]{10}$/.test(phoneNumber)) {
+    // Prefer the form's own value over React state: an autofilled phone
+    // number writes to the DOM without firing the change event React
+    // listens for, which would otherwise reject a visibly-filled field.
+    const submittedPhone = (String(new FormData(e.currentTarget).get("phone_number") ?? "") || phoneNumber)
+      .replace(/\D/g, "")
+      .slice(0, 10);
+
+    if (!/^[0-9]{10}$/.test(submittedPhone)) {
       setFormError("Enter a valid 10-digit phone number.");
       return;
     }
@@ -92,7 +99,7 @@ export default function NewOrderPage() {
     setSubmitting(true);
     try {
       const formData = new FormData();
-      formData.set("phone_number", phoneNumber);
+      formData.set("phone_number", submittedPhone);
       if (wantsPrint) {
         formData.set("print_spec", JSON.stringify(printSpec));
         if (documentFile) formData.set("document", documentFile);
@@ -260,7 +267,9 @@ export default function NewOrderPage() {
           <div className="mt-4">
             <input
               type="tel"
+              name="phone_number"
               inputMode="numeric"
+              autoComplete="tel"
               placeholder="10-digit mobile number"
               value={phoneNumber}
               onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, "").slice(0, 10))}
