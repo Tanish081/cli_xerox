@@ -89,6 +89,14 @@ const UTR_FALLBACK_PATTERN = /\b\d{9,16}\b/;
 // payment).
 const AMOUNT_CURRENCY_PATTERN = /(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d{1,2})?)/i;
 const AMOUNT_BARE_PATTERN = /\b(\d+)\.(\d{2})\b/g;
+// Some apps show a whole-rupee amount with no decimals at all (Super Money
+// renders "₹12"), which the decimal pattern above can't catch once OCR
+// mangles the ₹ glyph. Those amounts sit alone on their own line, so match
+// "a line containing only a number, optionally preceded by a couple of junk
+// characters" — the junk being whatever ₹ was misread as. Requiring the
+// number to be the entire line is what keeps this from matching digits
+// inside a date or a transaction ID.
+const AMOUNT_OWN_LINE_PATTERN = /^[^\dA-Za-z\n]{0,3}\s*(\d[\d,]*)(?:\.(\d{1,2}))?\s*$/gm;
 
 const MONTH_INDEX: Record<string, number> = {
   jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3,
@@ -96,17 +104,31 @@ const MONTH_INDEX: Record<string, number> = {
   sep: 8, sept: 8, september: 8, oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
 };
 
-// Matches "13 August 2026, 12:08am" (GPay) and "13th Aug 26, 01:58 am"
-// (BHIM) — an optional ordinal suffix on the day (1st/2nd/3rd/4th) and
-// either a 2- or 4-digit year — captured as separate numeric groups rather
-// than a date-like substring, since handing an assembled string to
-// `new Date(...)` is what caused the original bug: JS's built-in parser
-// returns Invalid Date for "12:08am" (no space before am/pm) with no error,
-// and code that falls back to a looser pattern on that failure ends up
-// reading "12:08" as 24-hour time instead of 12:08 AM — a silent ~12-hour
-// misread.
-const DATETIME_PATTERN =
-  /(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\s+(\d{2}(?:\d{2})?),?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([APap][Mm])?/;
+// Every UPI app writes its timestamp differently, so both orderings are
+// matched, with a permissive separator between the date and time parts:
+//
+//   GPay        "13 August 2026, 2:40pm"      date first, comma
+//   BHIM        "13th Aug 26, 01:58 am"       ordinal day, 2-digit year
+//   Super Money "12 August 2026 • 07:45PM"    bullet separator, no space before PM
+//   PhonePe     "07:06 PM on 08 Aug 2026"     TIME first, joined by "on"
+//
+// The separator is "any run of up to 3 non-alphanumeric characters" rather
+// than a fixed list, because OCR renders glyphs like • inconsistently
+// (as *, °, ©, . or dropped entirely) and a fixed list silently fails to
+// match whichever variant it didn't anticipate.
+//
+// Both patterns capture separate numeric groups rather than a date-like
+// substring, since handing an assembled string to `new Date(...)` is what
+// caused an earlier bug: JS's built-in parser returns Invalid Date for
+// "12:08am" (no space before am/pm) with no error, and code that falls back
+// to a looser pattern on that failure ends up reading "12:08" as 24-hour
+// time instead of 12:08 AM — a silent ~12-hour misread.
+const DATE_PART = String.raw`(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?\s+(\d{2}(?:\d{2})?)`;
+const TIME_PART = String.raw`(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([APap]\.?[Mm]\.?)?`;
+const SEPARATOR = String.raw`\s*[^\dA-Za-z\n]{0,3}\s*`;
+
+const DATETIME_DATE_FIRST = new RegExp(DATE_PART + SEPARATOR + TIME_PART);
+const DATETIME_TIME_FIRST = new RegExp(TIME_PART + String.raw`\s+on\s+` + DATE_PART, "i");
 
 // UPI screenshots show the customer's local wall-clock time. This app is
 // for a single India shop, so that's always IST (UTC+5:30) — hardcoding it
@@ -116,10 +138,22 @@ const DATETIME_PATTERN =
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 function parseReceiptDateTime(text: string): Date | null {
-  const match = text.match(DATETIME_PATTERN);
-  if (!match) return null;
+  // Group order differs between the two patterns (date-first vs time-first),
+  // so normalize into the same set of parts before building the Date.
+  let dayStr: string, monthStr: string, yearStr: string;
+  let hourStr: string, minuteStr: string, secondStr: string | undefined, ampm: string | undefined;
 
-  const [, dayStr, monthStr, yearStr, hourStr, minuteStr, secondStr, ampm] = match;
+  const dateFirst = text.match(DATETIME_DATE_FIRST);
+  const timeFirst = text.match(DATETIME_TIME_FIRST);
+
+  if (dateFirst) {
+    [, dayStr, monthStr, yearStr, hourStr, minuteStr, secondStr, ampm] = dateFirst;
+  } else if (timeFirst) {
+    [, hourStr, minuteStr, secondStr, ampm, dayStr, monthStr, yearStr] = timeFirst;
+  } else {
+    return null;
+  }
+
   const month = MONTH_INDEX[monthStr.toLowerCase()];
   if (month === undefined) return null;
 
@@ -129,7 +163,8 @@ function parseReceiptDateTime(text: string): Date | null {
 
   let hour = Number(hourStr);
   if (ampm) {
-    const isPM = ampm.toLowerCase() === "pm";
+    // Strip any dots OCR picked up from "P.M." before comparing.
+    const isPM = ampm.toLowerCase().replace(/\./g, "") === "pm";
     if (hour === 12) hour = isPM ? 12 : 0;
     else if (isPM) hour += 12;
   }
@@ -154,6 +189,17 @@ export function extractPaymentFields(text: string): ExtractedPaymentFields {
     amountCandidates.push(Number(`${intPart}.${decimalPart}`));
     if (intPart.length > 1) {
       amountCandidates.push(Number(`${intPart.slice(1)}.${decimalPart}`));
+    }
+  }
+  for (const match of text.matchAll(AMOUNT_OWN_LINE_PATTERN)) {
+    const [, intPart, decimalPart] = match;
+    const whole = intPart.replace(/,/g, "");
+    amountCandidates.push(Number(decimalPart ? `${whole}.${decimalPart}` : whole));
+    // Same leading-digit-strip as above: a misread ₹ can merge into the
+    // number ("₹4" -> "24") instead of landing in the junk-prefix class.
+    if (whole.length > 1) {
+      const stripped = whole.slice(1);
+      amountCandidates.push(Number(decimalPart ? `${stripped}.${decimalPart}` : stripped));
     }
   }
 
