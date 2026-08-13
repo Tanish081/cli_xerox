@@ -202,14 +202,14 @@ export default function AdminDashboard() {
 
   return (
     <PageShell maxWidth="max-w-4xl">
-      <div className="flex items-center justify-between animate-fade-in">
+      <div className="flex flex-col gap-4 animate-fade-in sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs font-semibold tracking-wider text-indigo-600 uppercase dark:text-indigo-400">
             Admin
           </p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-900 dark:text-white">Dashboard</h1>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Link href="/admin/analytics">
             <Button variant="secondary" className="!px-4 !py-2 text-sm">
               Statistics
