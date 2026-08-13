@@ -4,10 +4,36 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button, Card, inputClass, PageShell } from "@/components/ui";
 
+// Reads the UPI string encoded inside the QR image the owner picked, so
+// checkout can offer a tap-to-pay link on mobile. Done in the browser
+// (canvas is built in) rather than server-side, which keeps an image-
+// decoding dependency out of the serverless bundle.
+async function readUpiPayloadFromImage(file: File): Promise<string | null> {
+  try {
+    const jsQR = (await import("jsqr")).default;
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(bitmap, 0, 0);
+    const { data, width, height } = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+    const result = jsQR(data, width, height);
+    const payload = result?.data?.trim();
+    return payload && /^upi:\/\//i.test(payload) ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function AdminSettingsPage() {
   const [shopName, setShopName] = useState("");
   const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [upiPayload, setUpiPayload] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [hasUpiLink, setHasUpiLink] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -18,9 +44,22 @@ export default function AdminSettingsPage() {
       .then((data) => {
         setShopName(data.shop_name ?? "");
         setQrImageUrl(data.qr_image_url ?? null);
+        setHasUpiLink(Boolean(data.has_upi_link));
       })
       .finally(() => setLoading(false));
   }, []);
+
+  async function handleFileChange(selected: File | null) {
+    setFile(selected);
+    setUpiPayload(null);
+    if (!selected) return;
+    setScanning(true);
+    try {
+      setUpiPayload(await readUpiPayloadFromImage(selected));
+    } finally {
+      setScanning(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -30,6 +69,7 @@ export default function AdminSettingsPage() {
       const formData = new FormData();
       formData.set("shop_name", shopName);
       if (file) formData.set("qr_image", file);
+      if (file && upiPayload) formData.set("upi_payload", upiPayload);
       const res = await fetch("/api/admin/shop-settings", { method: "POST", body: formData });
       const data = await res.json();
       if (!res.ok) {
@@ -38,8 +78,10 @@ export default function AdminSettingsPage() {
       }
       setMessage("Saved.");
       setFile(null);
+      setUpiPayload(null);
       const refreshed = await fetch("/api/admin/shop-settings", { cache: "no-store" }).then((r) => r.json());
       setQrImageUrl(refreshed.qr_image_url ?? null);
+      setHasUpiLink(Boolean(refreshed.has_upi_link));
     } finally {
       setSaving(false);
     }
@@ -96,9 +138,32 @@ export default function AdminSettingsPage() {
             <input
               type="file"
               accept="image/*"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
               className="mt-3 block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-600 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-indigo-500"
             />
+
+            {scanning && <p className="mt-2 text-xs text-neutral-500">Reading QR code…</p>}
+
+            {!scanning && file && upiPayload && (
+              <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400">
+                QR read successfully — customers on a phone will be able to tap it to open their UPI app with the
+                amount already filled in.
+              </p>
+            )}
+
+            {!scanning && file && !upiPayload && (
+              <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
+                Couldn&apos;t read a UPI code from this image. It will still be shown at checkout for customers to
+                scan with another device, but tap-to-pay won&apos;t work. Try a sharper, less cropped copy of the QR
+                if you want that.
+              </p>
+            )}
+
+            {!file && !hasUpiLink && qrImageUrl && (
+              <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
+                Tap-to-pay isn&apos;t set up for the current QR. Re-upload it here to enable it.
+              </p>
+            )}
           </div>
 
           {message && (

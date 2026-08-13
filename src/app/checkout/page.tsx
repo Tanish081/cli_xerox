@@ -1,10 +1,51 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button, Card, ErrorText, PageShell } from "@/components/ui";
 
-type QrInfo = { qr_image_url: string | null; amount: number; shop_name: string; payment_deadline: string };
+type QrInfo = {
+  qr_image_url: string | null;
+  amount: number;
+  shop_name: string;
+  payment_deadline: string;
+  upi_link: string | null;
+};
+
+// A phone can't scan a QR shown on its own screen, so on a touch device the
+// deep link is the only way to pay -- and on a desktop that link is useless,
+// since there's no UPI app to open. Show each where it actually works.
+// Rendered as false on the server so the markup matches the first client
+// render, then corrected once mounted.
+function useIsTouchDevice(): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      const query = window.matchMedia("(pointer: coarse)");
+      query.addEventListener("change", onChange);
+      return () => query.removeEventListener("change", onChange);
+    },
+    () => window.matchMedia("(pointer: coarse)").matches,
+    () => false
+  );
+}
+
+function QrImage({ src, shopName, href }: { src: string; shopName: string; href: string | null }) {
+  const image = (
+    <div className="rounded-2xl border-4 border-white bg-white p-2 shadow-lg dark:border-neutral-800">
+      {/* eslint-disable-next-line @next/next/no-img-element -- signed URL, not an optimizable static asset */}
+      <img src={src} alt={`${shopName} UPI QR code`} className="h-56 w-56 rounded-lg object-contain" />
+    </div>
+  );
+  // Without a deep link (desktop, or a QR we couldn't decode) the image is
+  // just something to scan, so it must not look tappable.
+  return href ? (
+    <a href={href} aria-label="Open your UPI app to pay">
+      {image}
+    </a>
+  ) : (
+    image
+  );
+}
 
 function formatCountdown(msRemaining: number): string {
   if (msRemaining <= 0) return "0:00";
@@ -27,6 +68,7 @@ function CheckoutForm() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [cancelled, setCancelled] = useState<string | null>(null);
+  const isTouchDevice = useIsTouchDevice();
 
   useEffect(() => {
     if (!orderNumber) return;
@@ -150,17 +192,33 @@ function CheckoutForm() {
         {qr && (
           <>
             {qr.qr_image_url && (
-              <div className="rounded-2xl border-4 border-white bg-white p-2 shadow-lg dark:border-neutral-800">
-                {/* eslint-disable-next-line @next/next/no-img-element -- signed URL, not an optimizable static asset */}
-                <img
-                  src={qr.qr_image_url}
-                  alt={`${qr.shop_name} UPI QR code`}
-                  className="h-56 w-56 rounded-lg object-contain"
-                />
-              </div>
+              <QrImage
+                src={qr.qr_image_url}
+                shopName={qr.shop_name}
+                href={isTouchDevice ? qr.upi_link : null}
+              />
             )}
             <p className="mt-4 text-3xl font-bold text-neutral-900 dark:text-white">₹{qr.amount.toFixed(2)}</p>
             <p className="text-sm text-neutral-500">Pay to {qr.shop_name}</p>
+
+            {isTouchDevice && qr.upi_link && (
+              <>
+                <a href={qr.upi_link} className="mt-4 w-full">
+                  <Button className="w-full">Pay ₹{qr.amount.toFixed(2)} in your UPI app</Button>
+                </a>
+                <p className="mt-2 text-center text-xs text-neutral-500">
+                  Opens GPay, PhonePe, Paytm or any UPI app with the amount filled in. Come back here afterwards to
+                  upload the screenshot.
+                </p>
+              </>
+            )}
+
+            {isTouchDevice && !qr.upi_link && (
+              <p className="mt-3 text-center text-xs text-neutral-500">
+                Scan this QR with a UPI app on another device, or screenshot it and open it from your gallery in
+                your UPI app&apos;s scanner.
+              </p>
+            )}
           </>
         )}
         {!qr && !qrError && (

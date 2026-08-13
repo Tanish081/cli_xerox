@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { requireAdmin } from "@/lib/admin-auth";
 import { signedUrl, MAX_ADMIN_IMAGE_BYTES } from "@/lib/storage";
 import { getShopSettings, SHOP_ASSETS_BUCKET } from "@/lib/shop-settings";
+import { isUpiPayload } from "@/lib/upi";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,8 @@ export async function GET() {
     qr_image_url: settings?.qr_image_path
       ? await signedUrl(supabase, SHOP_ASSETS_BUCKET, settings.qr_image_path)
       : null,
+    // Only whether tap-to-pay is set up, not the payload itself.
+    has_upi_link: Boolean(settings?.upi_payload),
   });
 }
 
@@ -37,10 +40,21 @@ export async function POST(request: Request) {
 
   const supabase = createServiceClient();
 
-  const update: { id: number; shop_name: string; qr_image_path?: string } = {
+  const update: { id: number; shop_name: string; qr_image_path?: string; upi_payload?: string | null } = {
     id: 1,
     shop_name: shopName.trim(),
   };
+
+  // The browser decodes the uploaded QR and sends the UPI string it holds,
+  // which becomes the customer's tap-to-pay link. Only stored alongside a
+  // new image, so replacing the QR can never leave a stale link pointing at
+  // a different payee than the QR on screen. Validated rather than trusted:
+  // it ends up in an href on the customer's phone.
+  const upiPayload = formData.get("upi_payload");
+  if (qrImage instanceof File && qrImage.size > 0) {
+    update.upi_payload =
+      typeof upiPayload === "string" && isUpiPayload(upiPayload) ? upiPayload.trim() : null;
+  }
 
   if (qrImage instanceof File && qrImage.size > MAX_ADMIN_IMAGE_BYTES) {
     return NextResponse.json({ error: "QR image is too large (max 8MB)" }, { status: 400 });

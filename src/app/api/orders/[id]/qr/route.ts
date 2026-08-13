@@ -4,6 +4,7 @@ import { hasOrderSession } from "@/lib/order-session";
 import { signedUrl } from "@/lib/storage";
 import { getShopSettings, SHOP_ASSETS_BUCKET } from "@/lib/shop-settings";
 import { PAYMENT_WINDOW_MS } from "@/lib/payment-window";
+import { buildUpiDeepLink } from "@/lib/upi";
 
 export const dynamic = "force-dynamic";
 
@@ -39,5 +40,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     amount: order.total_amount,
     shop_name: settings.shop_name,
     payment_deadline: paymentDeadline,
+    upi_link: settings.upi_payload
+      ? buildUpiDeepLink(settings.upi_payload, order.total_amount, orderNumber)
+      : null,
   });
 }
