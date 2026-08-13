@@ -1,4 +1,4 @@
-import { createWorker, type Worker } from "tesseract.js";
+import { createWorker, PSM, type Worker } from "tesseract.js";
 import { tmpdir } from "os";
 
 export type PaymentVerificationFailureReason =
@@ -31,10 +31,25 @@ function getWorker(): Promise<Worker> {
     // Vercel's serverless functions — pointing it at the OS temp dir (the
     // one writable path in that environment) keeps this working in
     // production instead of failing on every cold start.
-    workerPromise = createWorker("eng", 1, { cachePath: tmpdir() }).catch((err) => {
-      workerPromise = null; // let the next call retry instead of staying poisoned
-      throw err;
-    });
+    workerPromise = createWorker("eng", 1, { cachePath: tmpdir() })
+      .then(async (worker) => {
+        // Payment confirmation screens are sparse: a large icon, big gaps
+        // of white space, then isolated blocks of text (amount, payee
+        // name, timestamp) rather than dense paragraphs. Tesseract's
+        // default page-segmentation mode is tuned for paragraph-style
+        // documents and can skip an isolated text block entirely on a
+        // layout like this (observed: a screenshot's amount line was
+        // completely absent from the OCR output, not misread — the
+        // segmentation step never found it as a text region at all).
+        // SPARSE_TEXT is built for exactly this "scattered text on a
+        // mostly-blank page" case.
+        await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT });
+        return worker;
+      })
+      .catch((err) => {
+        workerPromise = null; // let the next call retry instead of staying poisoned
+        throw err;
+      });
   }
   return workerPromise;
 }
